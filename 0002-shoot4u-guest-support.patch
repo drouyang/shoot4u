@@ -1,4 +1,4 @@
-From 514e038373c79eede5bc60335a9125c56a0f7f82 Mon Sep 17 00:00:00 2001
+From 0d1f78ee87d68e76c99d81510a3c66efe3b8f71c Mon Sep 17 00:00:00 2001
 From: Jiannan Ouyang <jiannan.ouyang@gmail.com>
 Date: Thu, 16 Jul 2015 14:12:42 -0700
 Subject: [PATCH 2/2] shoot4u guest support
@@ -72,7 +72,7 @@ index e354cc6..04acc4c 100644
  	no_timer_check = 1;
  #endif
 diff --git a/arch/x86/mm/tlb.c b/arch/x86/mm/tlb.c
-index 3250f23..3e6b553 100644
+index 3250f23..c4c5732 100644
 --- a/arch/x86/mm/tlb.c
 +++ b/arch/x86/mm/tlb.c
 @@ -12,7 +12,9 @@
@@ -105,7 +105,7 @@ index 3250f23..3e6b553 100644
 +          set_bit(cpu, (void *)&cpu_bitmap);
 +        }
 +
-+        printk("[shoot4u] before KVM_HC_SHOOT4U hypercall, cpumask: %llx, start %lx, end %lx\n", cpu_bitmap, start, end);
++        //printk("[shoot4u] before KVM_HC_SHOOT4U hypercall, cpumask: %llx, start %lx, end %lx\n", cpu_bitmap, start, end);
 +        kvm_hypercall3(KVM_HC_SHOOT4U, cpu_bitmap, start, end);
 +}
 +

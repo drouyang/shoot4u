@@ -1,4 +1,4 @@
-From 5bd280a9bdf0def3be7fdbbf22cccebdd7dd7e93 Mon Sep 17 00:00:00 2001
+From 711bd88041a50f63a9d5fa234ee5f607e0d41a2f Mon Sep 17 00:00:00 2001
 From: Jiannan Ouyang <jiannan.ouyang@gmail.com>
 Date: Thu, 16 Jul 2015 14:12:29 -0700
 Subject: [PATCH 1/2] shoot4u host support
@@ -6,10 +6,10 @@ Subject: [PATCH 1/2] shoot4u host support
 ---
  arch/x86/include/asm/kvm_host.h |  4 +++
  arch/x86/include/asm/vmx.h      |  2 ++
- arch/x86/kvm/vmx.c              | 37 +++++++++++++++++++++
- arch/x86/kvm/x86.c              | 72 +++++++++++++++++++++++++++++++++++++++++
+ arch/x86/kvm/vmx.c              | 38 ++++++++++++++++++++
+ arch/x86/kvm/x86.c              | 78 +++++++++++++++++++++++++++++++++++++++++
  include/uapi/linux/kvm_para.h   |  1 +
- 5 files changed, 116 insertions(+)
+ 5 files changed, 123 insertions(+)
 
 diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
 index 1c0fb57..babf7e8 100644
@@ -47,7 +47,7 @@ index da772ed..0da58ba 100644
  #define VMX_VPID_EXTENT_GLOBAL_CONTEXT_BIT      (1ull << 10) /* (42 - 32) */
  
 diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
-index 5318d64..d357f55 100644
+index 5318d64..2689db5 100644
 --- a/arch/x86/kvm/vmx.c
 +++ b/arch/x86/kvm/vmx.c
 @@ -563,6 +563,12 @@ static inline struct vcpu_vmx *to_vmx(struct kvm_vcpu *vcpu)
@@ -101,16 +101,17 @@ index 5318d64..d357f55 100644
  static inline void ept_sync_global(void)
  {
  	if (cpu_has_vmx_invept_global())
-@@ -3458,6 +3481,16 @@ static void vmx_flush_tlb(struct kvm_vcpu *vcpu)
+@@ -3458,6 +3481,17 @@ static void vmx_flush_tlb(struct kvm_vcpu *vcpu)
  	}
  }
  
-+static void vmx_flush_tlb_vpid_single_ctx(struct kvm_vcpu *vcpu)
++// does not flush EPT TLB caching
++static void vmx_flush_tlb_single_ctx(struct kvm_vcpu *vcpu)
 +{
 +	vpid_sync_context(to_vmx(vcpu));
 +}
 +
-+static void vmx_flush_tlb_vpid_single_addr(struct kvm_vcpu *vcpu, unsigned long addr)
++static void vmx_flush_tlb_single_addr(struct kvm_vcpu *vcpu, unsigned long addr)
 +{
 +        vpid_sync_addr(to_vmx(vcpu), addr);
 +}
@@ -118,19 +119,19 @@ index 5318d64..d357f55 100644
  static void vmx_decache_cr0_guest_bits(struct kvm_vcpu *vcpu)
  {
  	ulong cr0_guest_owned_bits = vcpu->arch.cr0_guest_owned_bits;
-@@ -10183,6 +10216,10 @@ static struct kvm_x86_ops vmx_x86_ops = {
+@@ -10183,6 +10217,10 @@ static struct kvm_x86_ops vmx_x86_ops = {
  	.fpu_deactivate = vmx_fpu_deactivate,
  
  	.tlb_flush = vmx_flush_tlb,
-+	.tlb_flush_vpid_single_ctx = vmx_flush_tlb_vpid_single_ctx,
-+	.tlb_flush_vpid_single_addr = vmx_flush_tlb_vpid_single_addr,
++	.tlb_flush_vpid_single_ctx = vmx_flush_tlb_single_ctx,
++	.tlb_flush_vpid_single_addr = vmx_flush_tlb_single_addr,
 +
 +        .get_vpid = vmx_get_vpid,
  
  	.run = vmx_vcpu_run,
  	.handle_exit = vmx_handle_exit,
 diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
-index 8838057..6d3aae6 100644
+index 8838057..2f96524 100644
 --- a/arch/x86/kvm/x86.c
 +++ b/arch/x86/kvm/x86.c
 @@ -64,6 +64,7 @@
@@ -141,7 +142,20 @@ index 8838057..6d3aae6 100644
  
  #define MAX_IO_MSRS 256
  #define KVM_MAX_MCE_BANKS 32
-@@ -5903,6 +5904,73 @@ static void kvm_pv_kick_cpu_op(struct kvm *kvm, unsigned long flags, int apicid)
+@@ -112,6 +113,12 @@ module_param(tsc_tolerance_ppm, uint, S_IRUGO | S_IWUSR);
+ unsigned int lapic_timer_advance_ns = 0;
+ module_param(lapic_timer_advance_ns, uint, S_IRUGO | S_IWUSR);
+ 
++/* lapic timer advance (tscdeadline mode only) in nanoseconds */
++#define SHOOT4U_MODE_COARSE 0
++#define SHOOT4U_MODE_FINE   1
++unsigned int shoot4u_mode = SHOOT4U_MODE_COARSE;
++module_param(shoot4u_mode, uint, S_IRUGO | S_IWUSR);
++
+ static bool backwards_tsc_observed = false;
+ 
+ #define KVM_NR_SHARED_MSRS 16
+@@ -5903,6 +5910,73 @@ static void kvm_pv_kick_cpu_op(struct kvm *kvm, unsigned long flags, int apicid)
  	kvm_irq_delivery_to_apic(kvm, 0, &lapic_irq, NULL);
  }
  
@@ -157,28 +171,28 @@ index 8838057..6d3aae6 100644
 +{
 +	struct kvm_shoot4u_info *f = info;
 +
-+        // implementation 1: flush everything
-+        printk("[shoot4u] IPI handler at pCPU %d: invalidate vCPU %d\n", smp_processor_id(), f->vcpu->vcpu_id);
-+        kvm_x86_ops->tlb_flush(f->vcpu);
-+
-+        // implementation 2: fine grain flushing
-+        /*
-+        if (f->flush_end == TLB_FLUSH_ALL)
-+                // flush all entries
-+                kvm_x86_ops->tlb_flush_vpid_single_contx(f->vcpu);
-+        else if (!f->flush_end)
-+                // flush single entry
-+                kvm_x86_ops->tlb_flush_vpid_single_addr(f->vcpu, f->flush_start);
-+        else {
-+                // flush multiple entries
-+                unsigned long addr;
-+                addr = f->flush_start;
-+                while (addr < f->flush_end) {
++        //printk("[shoot4u] IPI handler at pCPU %d: invalidate vCPU %d\n", smp_processor_id(), f->vcpu->vcpu_id);
++        if (!f->flush_end)
++            f->flush_end = f->flush_start + PAGE_SIZE;
++        
++        if (shoot4u_mode == SHOOT4U_MODE_COARSE) {
++            // implementation 1: flush everything
++            kvm_x86_ops->tlb_flush(f->vcpu);
++        } else {
++            // implementation 2: fine grain flushing
++            if (f->flush_end == TLB_FLUSH_ALL)
++                    kvm_x86_ops->tlb_flush_vpid_single_ctx(f->vcpu);
++            else {
++                    unsigned long addr;
++                    addr = f->flush_start;
++                    while (addr < f->flush_end) {
 +                        kvm_x86_ops->tlb_flush_vpid_single_addr(f->vcpu, f->flush_start);
 +                        addr += PAGE_SIZE;
-+                }
++                    }
++            }
++        
 +        }
-+        */
++
 +        return;
 +}
 +
@@ -198,12 +212,12 @@ index 8838057..6d3aae6 100644
 +	info.flush_start = start;
 +	info.flush_end = end;
 +
-+        printk("[shoot4u] inside hypercall handler\n");
++        //printk("[shoot4u] inside hypercall handler\n");
 +        // construct phsical cpu mask from vcpu bitmap
 +	kvm_for_each_vcpu(i, v, kvm) {
 +                if (v != vcpu && test_bit(v->vcpu_id, (void*)&vcpu_bitmap)) {
 +                        info.vcpu = v; 
-+                        printk("[shoot4u] before send IPI to vcpu %d at pcpu %d\n", v->vcpu_id, v->cpu);
++                        //printk("[shoot4u] before send IPI to vcpu %d at pcpu %d\n", v->vcpu_id, v->cpu);
 +                        smp_call_function_single(v->cpu, flush_tlb_func_shoot4u, &info, 1);
 +                        // maybe can do call_function_many by map vcpu_mask to pvpu_mask, 
 +                        // it leverages the fact that vcpu migratation triggers tlb_flush automatically
@@ -215,7 +229,7 @@ index 8838057..6d3aae6 100644
  int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
  {
  	unsigned long nr, a0, a1, a2, a3, ret;
-@@ -5941,6 +6009,10 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
+@@ -5941,6 +6015,10 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
  		kvm_pv_kick_cpu_op(vcpu->kvm, a0, a1);
  		ret = 0;
  		break;
