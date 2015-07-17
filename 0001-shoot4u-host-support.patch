@@ -1,0 +1,243 @@
+From 5bd280a9bdf0def3be7fdbbf22cccebdd7dd7e93 Mon Sep 17 00:00:00 2001
+From: Jiannan Ouyang <jiannan.ouyang@gmail.com>
+Date: Thu, 16 Jul 2015 14:12:29 -0700
+Subject: [PATCH 1/2] shoot4u host support
+
+---
+ arch/x86/include/asm/kvm_host.h |  4 +++
+ arch/x86/include/asm/vmx.h      |  2 ++
+ arch/x86/kvm/vmx.c              | 37 +++++++++++++++++++++
+ arch/x86/kvm/x86.c              | 72 +++++++++++++++++++++++++++++++++++++++++
+ include/uapi/linux/kvm_para.h   |  1 +
+ 5 files changed, 116 insertions(+)
+
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index 1c0fb57..babf7e8 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -741,6 +741,10 @@ struct kvm_x86_ops {
+ 	void (*fpu_deactivate)(struct kvm_vcpu *vcpu);
+ 
+ 	void (*tlb_flush)(struct kvm_vcpu *vcpu);
++	void (*tlb_flush_vpid_single_ctx)(struct kvm_vcpu *vcpu);
++	void (*tlb_flush_vpid_single_addr)(struct kvm_vcpu *vcpu, unsigned long addr);
++
++	int (*get_vpid)(struct kvm_vcpu *vcpu);
+ 
+ 	void (*run)(struct kvm_vcpu *vcpu);
+ 	int (*handle_exit)(struct kvm_vcpu *vcpu);
+diff --git a/arch/x86/include/asm/vmx.h b/arch/x86/include/asm/vmx.h
+index da772ed..0da58ba 100644
+--- a/arch/x86/include/asm/vmx.h
++++ b/arch/x86/include/asm/vmx.h
+@@ -396,6 +396,7 @@ enum vmcs_field {
+ #define IDENTITY_PAGETABLE_PRIVATE_MEMSLOT	(KVM_USER_MEM_SLOTS + 2)
+ 
+ #define VMX_NR_VPIDS				(1 << 16)
++#define VMX_VPID_EXTENT_INDIVIDUAL_ADDR		0
+ #define VMX_VPID_EXTENT_SINGLE_CONTEXT		1
+ #define VMX_VPID_EXTENT_ALL_CONTEXT		2
+ 
+@@ -415,6 +416,7 @@ enum vmcs_field {
+ #define VMX_EPT_EXTENT_CONTEXT_BIT		(1ull << 25)
+ #define VMX_EPT_EXTENT_GLOBAL_BIT		(1ull << 26)
+ 
++#define VMX_VPID_EXTENT_INDIVIDUAL_ADDR_BIT      (1ull << 8) /* (40 - 32) */
+ #define VMX_VPID_EXTENT_SINGLE_CONTEXT_BIT      (1ull << 9) /* (41 - 32) */
+ #define VMX_VPID_EXTENT_GLOBAL_CONTEXT_BIT      (1ull << 10) /* (42 - 32) */
+ 
+diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
+index 5318d64..d357f55 100644
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -563,6 +563,12 @@ static inline struct vcpu_vmx *to_vmx(struct kvm_vcpu *vcpu)
+ 	return container_of(vcpu, struct vcpu_vmx, vcpu);
+ }
+ 
++static inline int vmx_get_vpid(struct kvm_vcpu *vcpu)
++{
++        struct vcpu_vmx *vmx = container_of(vcpu, struct vcpu_vmx, vcpu);
++        return vmx->vpid;
++}
++
+ #define VMCS12_OFFSET(x) offsetof(struct vmcs12, x)
+ #define FIELD(number, name)	[number] = VMCS12_OFFSET(name)
+ #define FIELD64(number, name)	[number] = VMCS12_OFFSET(name), \
+@@ -1034,6 +1040,11 @@ static inline bool cpu_has_vmx_invept_global(void)
+ 	return vmx_capability.ept & VMX_EPT_EXTENT_GLOBAL_BIT;
+ }
+ 
++static inline bool cpu_has_vmx_invvpid_addr(void)
++{
++	return vmx_capability.vpid & VMX_VPID_EXTENT_INDIVIDUAL_ADDR_BIT;
++}
++
+ static inline bool cpu_has_vmx_invvpid_single(void)
+ {
+ 	return vmx_capability.vpid & VMX_VPID_EXTENT_SINGLE_CONTEXT_BIT;
+@@ -1337,6 +1348,7 @@ static void loaded_vmcs_clear(struct loaded_vmcs *loaded_vmcs)
+ 			 __loaded_vmcs_clear, loaded_vmcs, 1);
+ }
+ 
++
+ static inline void vpid_sync_vcpu_single(struct vcpu_vmx *vmx)
+ {
+ 	if (vmx->vpid == 0)
+@@ -1360,6 +1372,17 @@ static inline void vpid_sync_context(struct vcpu_vmx *vmx)
+ 		vpid_sync_vcpu_global();
+ }
+ 
++static inline void vpid_sync_addr(struct vcpu_vmx *vmx, unsigned long addr)
++{
++	if (vmx->vpid == 0)
++		return;
++
++	if (cpu_has_vmx_invvpid_addr())
++		__invvpid(VMX_VPID_EXTENT_INDIVIDUAL_ADDR, vmx->vpid, addr);
++        else
++                vpid_sync_context(vmx);
++}
++
+ static inline void ept_sync_global(void)
+ {
+ 	if (cpu_has_vmx_invept_global())
+@@ -3458,6 +3481,16 @@ static void vmx_flush_tlb(struct kvm_vcpu *vcpu)
+ 	}
+ }
+ 
++static void vmx_flush_tlb_vpid_single_ctx(struct kvm_vcpu *vcpu)
++{
++	vpid_sync_context(to_vmx(vcpu));
++}
++
++static void vmx_flush_tlb_vpid_single_addr(struct kvm_vcpu *vcpu, unsigned long addr)
++{
++        vpid_sync_addr(to_vmx(vcpu), addr);
++}
++
+ static void vmx_decache_cr0_guest_bits(struct kvm_vcpu *vcpu)
+ {
+ 	ulong cr0_guest_owned_bits = vcpu->arch.cr0_guest_owned_bits;
+@@ -10183,6 +10216,10 @@ static struct kvm_x86_ops vmx_x86_ops = {
+ 	.fpu_deactivate = vmx_fpu_deactivate,
+ 
+ 	.tlb_flush = vmx_flush_tlb,
++	.tlb_flush_vpid_single_ctx = vmx_flush_tlb_vpid_single_ctx,
++	.tlb_flush_vpid_single_addr = vmx_flush_tlb_vpid_single_addr,
++
++        .get_vpid = vmx_get_vpid,
+ 
+ 	.run = vmx_vcpu_run,
+ 	.handle_exit = vmx_handle_exit,
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index 8838057..6d3aae6 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -64,6 +64,7 @@
+ #include <asm/xcr.h>
+ #include <asm/pvclock.h>
+ #include <asm/div64.h>
++#include <asm/tlbflush.h>
+ 
+ #define MAX_IO_MSRS 256
+ #define KVM_MAX_MCE_BANKS 32
+@@ -5903,6 +5904,73 @@ static void kvm_pv_kick_cpu_op(struct kvm *kvm, unsigned long flags, int apicid)
+ 	kvm_irq_delivery_to_apic(kvm, 0, &lapic_irq, NULL);
+ }
+ 
++
++struct kvm_shoot4u_info {
++        struct kvm_vcpu *vcpu;
++	unsigned long flush_start;
++	unsigned long flush_end;
++};
++
++/* shoot4u host IPI handler with invvipd */
++static void flush_tlb_func_shoot4u(void *info)
++{
++	struct kvm_shoot4u_info *f = info;
++
++        // implementation 1: flush everything
++        printk("[shoot4u] IPI handler at pCPU %d: invalidate vCPU %d\n", smp_processor_id(), f->vcpu->vcpu_id);
++        kvm_x86_ops->tlb_flush(f->vcpu);
++
++        // implementation 2: fine grain flushing
++        /*
++        if (f->flush_end == TLB_FLUSH_ALL)
++                // flush all entries
++                kvm_x86_ops->tlb_flush_vpid_single_contx(f->vcpu);
++        else if (!f->flush_end)
++                // flush single entry
++                kvm_x86_ops->tlb_flush_vpid_single_addr(f->vcpu, f->flush_start);
++        else {
++                // flush multiple entries
++                unsigned long addr;
++                addr = f->flush_start;
++                while (addr < f->flush_end) {
++                        kvm_x86_ops->tlb_flush_vpid_single_addr(f->vcpu, f->flush_start);
++                        addr += PAGE_SIZE;
++                }
++        }
++        */
++        return;
++}
++
++/*
++ * kvm_pv_shoot4u_op:  Handle tlb shoot down hypercall
++ *
++ * @apicid - apicid of vcpu to be kicked.
++ */
++static void kvm_pv_shoot4u_op(struct kvm_vcpu *vcpu, unsigned long vcpu_bitmap,
++        unsigned long start, unsigned long end)
++{
++	struct kvm_shoot4u_info info;
++        struct kvm *kvm = vcpu->kvm;
++        struct kvm_vcpu *v;
++        int i;
++
++	info.flush_start = start;
++	info.flush_end = end;
++
++        printk("[shoot4u] inside hypercall handler\n");
++        // construct phsical cpu mask from vcpu bitmap
++	kvm_for_each_vcpu(i, v, kvm) {
++                if (v != vcpu && test_bit(v->vcpu_id, (void*)&vcpu_bitmap)) {
++                        info.vcpu = v; 
++                        printk("[shoot4u] before send IPI to vcpu %d at pcpu %d\n", v->vcpu_id, v->cpu);
++                        smp_call_function_single(v->cpu, flush_tlb_func_shoot4u, &info, 1);
++                        // maybe can do call_function_many by map vcpu_mask to pvpu_mask, 
++                        // it leverages the fact that vcpu migratation triggers tlb_flush automatically
++                }
++        }
++}
++
++
+ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
+ {
+ 	unsigned long nr, a0, a1, a2, a3, ret;
+@@ -5941,6 +6009,10 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
+ 		kvm_pv_kick_cpu_op(vcpu->kvm, a0, a1);
+ 		ret = 0;
+ 		break;
++	case KVM_HC_SHOOT4U:
++		kvm_pv_shoot4u_op(vcpu, a0, a1, a2);
++		ret = 0;
++		break;
+ 	default:
+ 		ret = -KVM_ENOSYS;
+ 		break;
+diff --git a/include/uapi/linux/kvm_para.h b/include/uapi/linux/kvm_para.h
+index bf6cd7d..d5a2e45 100644
+--- a/include/uapi/linux/kvm_para.h
++++ b/include/uapi/linux/kvm_para.h
+@@ -24,6 +24,7 @@
+ #define KVM_HC_MIPS_EXIT_VM		7
+ #define KVM_HC_MIPS_CONSOLE_OUTPUT	8
+ 
++#define KVM_HC_SHOOT4U			12
+ /*
+  * hypercalls use architecture specific
+  */
+-- 
+1.9.1
+
