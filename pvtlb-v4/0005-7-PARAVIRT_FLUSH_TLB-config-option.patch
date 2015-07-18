@@ -1,0 +1,34 @@
+From 0853f8c98e18270df93dc01fae0183c07d8539f0 Mon Sep 17 00:00:00 2001
+From: Jiannan Ouyang <ouyang@cs.pitt.edu>
+Date: Sat, 18 Jul 2015 17:11:28 -0400
+Subject: [PATCH 5/5] 7: PARAVIRT_FLUSH_TLB config option
+
+---
+ arch/x86/Kconfig | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
+index b7d31ca..7a22ba1 100644
+--- a/arch/x86/Kconfig
++++ b/arch/x86/Kconfig
+@@ -708,6 +708,17 @@ config PARAVIRT_TIME_ACCOUNTING
+ 
+ 	  If in doubt, say N here.
+ 
++config PARAVIRT_TLB_FLUSH
++       bool "Paravirtualization layer for TLB Flush"
++       depends on PARAVIRT && SMP && EXPERIMENTAL
++       select HAVE_RCU_TABLE_FREE
++       ---help---
++         Paravirtualized Flush TLB replace the native implementation
++         with something virtualization-friendly (for example, set a
++         flag for sleeping vcpu and do not wait for it).
++
++         If you are unsure how to answer this question, answer N.
++
+ config PARAVIRT_CLOCK
+ 	bool
+ 
+-- 
+1.9.1
+

@@ -1,0 +1,65 @@
+From 2eca39b8720e63623d2fe40a38ed93c83b8a9ba0 Mon Sep 17 00:00:00 2001
+From: Jiannan Ouyang <ouyang@cs.pitt.edu>
+Date: Sat, 18 Jul 2015 17:08:55 -0400
+Subject: [PATCH 4/5] 6: host support for pvtlb
+
+---
+ arch/x86/kvm/x86.c | 28 ++++++++++++----------------
+ 1 file changed, 12 insertions(+), 16 deletions(-)
+
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index a1ea5bc..7b48d4a 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -2098,20 +2098,9 @@ static void record_steal_time(struct kvm_vcpu *vcpu)
+ 		&vcpu->arch.st.steal, sizeof(struct kvm_steal_time));
+ }
+ 
+-static void kvm_set_atomic(u64 *addr, u64 old, u64 new)
+-{
+-       int loop = 1000000;
+-       while (1) {
+-               if (cmpxchg(addr, old, new) == old)
+-                       break;
+-               loop--;
+-               if (!loop) {
+-                       pr_info("atomic cur: %lx old: %lx new: %lx\n",
+-                               *addr, old, new);
+-                       break;
+-               }
+-       }
+-}
++#define VS_NOT_IN_GUEST      (0)
++#define VS_IN_GUEST          (1 << KVM_VCPU_STATE_IN_GUEST_MODE)
++#define VS_SHOULD_FLUSH      (1 << KVM_VCPU_STATE_SHOULD_FLUSH)
+ 
+ static void kvm_set_vcpu_state(struct kvm_vcpu *vcpu)
+ {
+@@ -2125,7 +2114,13 @@ static void kvm_set_vcpu_state(struct kvm_vcpu *vcpu)
+        kaddr = kmap_atomic(vcpu->arch.v_state.vs_page);
+        kaddr += vcpu->arch.v_state.vs_offset;
+        vs = kaddr;
+-       kvm_set_atomic(&vs->state, 0, 1 << KVM_VCPU_STATE_IN_GUEST_MODE);
++       if (xchg(&vs->state, VS_IN_GUEST) == VS_SHOULD_FLUSH) {
++               /* 
++                * Do TLB_FLUSH before entering the guest, its passed
++                * the stage of request checking 
++                */
++               kvm_x86_ops->tlb_flush(vcpu);
++       }
+        kunmap_atomic(kaddr);
+ }
+ 
+@@ -2141,7 +2136,8 @@ static void kvm_clear_vcpu_state(struct kvm_vcpu *vcpu)
+        kaddr = kmap_atomic(vcpu->arch.v_state.vs_page);
+        kaddr += vcpu->arch.v_state.vs_offset;
+        vs = kaddr;
+-       kvm_set_atomic(&vs->state, 1 << KVM_VCPU_STATE_IN_GUEST_MODE, 0);
++       if (xchg(&vs->state, VS_NOT_IN_GUEST) == VS_SHOULD_FLUSH)
++               kvm_make_request(KVM_REQ_TLB_FLUSH, vcpu);
+        kunmap_atomic(kaddr);
+ }
+ 
+-- 
+1.9.1
+
