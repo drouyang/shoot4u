@@ -1,0 +1,75 @@
+#!/usr/bin/env ktap
+
+#Demo for thread-local variable
+#
+#Note this kind of function time tracing already handled concurrent issue,
+#but not aware on the recursion problem, user need to aware this limitation,
+#so don't use this script to trace function which could be called recursive.
+
+var self = {}
+var count_max = 0
+var count_min = 0
+var count_num = 0
+var total_time = 0
+
+var histo = {}
+
+printf("measure time (us) of function kvm_flush_tlb_others\n");
+
+trace probe:kvm_flush_tlb_others {
+	if (execname == "ktap") {
+		return
+	}
+
+	self[tid] = gettimeofday_us()
+}
+
+trace probe:kvm_flush_tlb_others%return {
+	if (execname == "ktap") {
+		return
+	}
+
+	if (self[tid] == nil) {
+		return
+	}
+
+	var duration = gettimeofday_us() - self[tid]
+
+	histo[duration] += 1
+
+	if (duration > count_max) {
+		count_max = duration
+	}
+	var min = count_min
+	if (min == 0 || duration < min) {
+		count_min = duration
+	}
+
+	count_num = count_num + 1
+	total_time = total_time + duration
+
+	self[tid] = nil
+}
+
+tick-30s {
+	printf("\n")
+	for (k, v in pairs(histo)) {
+		printf("%d\t%d\n", k, v)
+	}
+	printf("\n")
+	exit()
+}
+
+trace_end {
+	var avg
+	if (count_num == 0) {
+		avg = 0
+	} else {
+		avg = total_time/count_num
+	}
+
+	printf("\n")
+	printf("N\tmin\tavg\tmax\t(us)\n");
+	printf("---------------------------\n")
+	printf("%d\t%d\t%d\t%d\n", count_num, count_min, avg, count_max)
+}
