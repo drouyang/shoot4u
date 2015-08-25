@@ -21,7 +21,7 @@ trace probe:native_flush_tlb_others {
 		return
 	}
 
-	self[tid] = gettimeofday_us()
+	self[tid] = gettimeofday_ms()
 }
 
 trace probe:native_flush_tlb_others%return {
@@ -33,7 +33,7 @@ trace probe:native_flush_tlb_others%return {
 		return
 	}
 
-	var duration = gettimeofday_us() - self[tid]
+	var duration = gettimeofday_ms() - self[tid]
 
 	histo[duration] += 1
 
@@ -51,7 +51,7 @@ trace probe:native_flush_tlb_others%return {
 	self[tid] = nil
 }
 
-tick-30s {
+tick-600s {
 	printf("\n")
 	for (k, v in pairs(histo)) {
 		printf("%d\t%d\n", k, v)
