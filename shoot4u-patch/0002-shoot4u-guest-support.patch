@@ -1,8 +1,9 @@
-From 0d1f78ee87d68e76c99d81510a3c66efe3b8f71c Mon Sep 17 00:00:00 2001
+From a75cad8949f1b900a6c60bc15c10e7065ded1f50 Mon Sep 17 00:00:00 2001
 From: Jiannan Ouyang <jiannan.ouyang@gmail.com>
 Date: Thu, 16 Jul 2015 14:12:42 -0700
-Subject: [PATCH 2/2] shoot4u guest support
+Subject: [PATCH 2/4] shoot4u guest support
 
+Signed-off-by: ouyang@cs.pitt.edu <Jiannan Ouyang>
 ---
  arch/x86/Kconfig                |  6 ++++++
  arch/x86/include/asm/tlbflush.h | 11 +++++++++++
@@ -113,5 +114,5 @@ index 3250f23..c4c5732 100644
  				 struct mm_struct *mm, unsigned long start,
  				 unsigned long end)
 -- 
-1.9.1
+1.8.3.1
 

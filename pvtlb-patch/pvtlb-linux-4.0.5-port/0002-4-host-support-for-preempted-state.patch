@@ -1,0 +1,205 @@
+From 1e960de99747d62392d57b3a0c8a6e9212679ff9 Mon Sep 17 00:00:00 2001
+From: Jiannan Ouyang <ouyang@cs.pitt.edu>
+Date: Sat, 18 Jul 2015 17:07:21 -0400
+Subject: [PATCH 2/7] 4: host support for preempted state
+
+---
+ arch/x86/include/asm/kvm_host.h |  7 ++++
+ arch/x86/kvm/cpuid.c            |  1 +
+ arch/x86/kvm/x86.c              | 88 ++++++++++++++++++++++++++++++++++++++++-
+ 3 files changed, 94 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index 1c0fb57..2996fef 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -456,6 +456,13 @@ struct kvm_vcpu_arch {
+ 		struct kvm_steal_time steal;
+ 	} st;
+ 
++  /* indicates vcpu is running or preempted */
++  struct {
++          u64 msr_val;
++          struct page *vs_page;
++          unsigned int vs_offset;
++  } v_state;
++
+ 	u64 last_guest_tsc;
+ 	u64 last_host_tsc;
+ 	u64 tsc_offset_adjustment;
+diff --git a/arch/x86/kvm/cpuid.c b/arch/x86/kvm/cpuid.c
+index 307f9ec..1e616b2 100644
+--- a/arch/x86/kvm/cpuid.c
++++ b/arch/x86/kvm/cpuid.c
+@@ -518,6 +518,7 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
+ 			     (1 << KVM_FEATURE_CLOCKSOURCE2) |
+ 			     (1 << KVM_FEATURE_ASYNC_PF) |
+ 			     (1 << KVM_FEATURE_PV_EOI) |
++                             (1 << KVM_FEATURE_VCPU_STATE) |
+ 			     (1 << KVM_FEATURE_CLOCKSOURCE_STABLE_BIT) |
+ 			     (1 << KVM_FEATURE_PV_UNHALT);
+ 
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index 8838057..a1ea5bc 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -915,14 +915,14 @@ EXPORT_SYMBOL_GPL(kvm_rdpmc);
+  * kvm-specific. Those are put in the beginning of the list.
+  */
+ 
+-#define KVM_SAVE_MSRS_BEGIN	12
++#define KVM_SAVE_MSRS_BEGIN	13
+ static u32 msrs_to_save[] = {
+ 	MSR_KVM_SYSTEM_TIME, MSR_KVM_WALL_CLOCK,
+ 	MSR_KVM_SYSTEM_TIME_NEW, MSR_KVM_WALL_CLOCK_NEW,
+ 	HV_X64_MSR_GUEST_OS_ID, HV_X64_MSR_HYPERCALL,
+ 	HV_X64_MSR_TIME_REF_COUNT, HV_X64_MSR_REFERENCE_TSC,
+ 	HV_X64_MSR_APIC_ASSIST_PAGE, MSR_KVM_ASYNC_PF_EN, MSR_KVM_STEAL_TIME,
+-	MSR_KVM_PV_EOI_EN,
++        MSR_KVM_VCPU_STATE, MSR_KVM_PV_EOI_EN,
+ 	MSR_IA32_SYSENTER_CS, MSR_IA32_SYSENTER_ESP, MSR_IA32_SYSENTER_EIP,
+ 	MSR_STAR,
+ #ifdef CONFIG_X86_64
+@@ -2098,6 +2098,63 @@ static void record_steal_time(struct kvm_vcpu *vcpu)
+ 		&vcpu->arch.st.steal, sizeof(struct kvm_steal_time));
+ }
+ 
++static void kvm_set_atomic(u64 *addr, u64 old, u64 new)
++{
++       int loop = 1000000;
++       while (1) {
++               if (cmpxchg(addr, old, new) == old)
++                       break;
++               loop--;
++               if (!loop) {
++                       pr_info("atomic cur: %lx old: %lx new: %lx\n",
++                               *addr, old, new);
++                       break;
++               }
++       }
++}
++
++static void kvm_set_vcpu_state(struct kvm_vcpu *vcpu)
++{
++       struct kvm_vcpu_state *vs;
++       char *kaddr;
++
++       if (!((vcpu->arch.v_state.msr_val & KVM_MSR_ENABLED) &&
++                       vcpu->arch.v_state.vs_page))
++               return;
++
++       kaddr = kmap_atomic(vcpu->arch.v_state.vs_page);
++       kaddr += vcpu->arch.v_state.vs_offset;
++       vs = kaddr;
++       kvm_set_atomic(&vs->state, 0, 1 << KVM_VCPU_STATE_IN_GUEST_MODE);
++       kunmap_atomic(kaddr);
++}
++
++static void kvm_clear_vcpu_state(struct kvm_vcpu *vcpu)
++{
++       struct kvm_vcpu_state *vs;
++       char *kaddr;
++
++       if (!((vcpu->arch.v_state.msr_val & KVM_MSR_ENABLED) &&
++                       vcpu->arch.v_state.vs_page))
++               return;
++
++       kaddr = kmap_atomic(vcpu->arch.v_state.vs_page);
++       kaddr += vcpu->arch.v_state.vs_offset;
++       vs = kaddr;
++       kvm_set_atomic(&vs->state, 1 << KVM_VCPU_STATE_IN_GUEST_MODE, 0);
++       kunmap_atomic(kaddr);
++}
++
++static void kvm_vcpu_state_reset(struct kvm_vcpu *vcpu)
++{
++       vcpu->arch.v_state.msr_val = 0;
++       vcpu->arch.v_state.vs_offset = 0;
++       if (vcpu->arch.v_state.vs_page) {
++               kvm_release_page_dirty(vcpu->arch.v_state.vs_page);
++               vcpu->arch.v_state.vs_page = NULL;
++       }
++}
++
+ int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
+ {
+ 	bool pr = false;
+@@ -2242,6 +2299,24 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
+ 			return 1;
+ 		break;
+ 
++       case MSR_KVM_VCPU_STATE:
++               kvm_vcpu_state_reset(vcpu);
++
++               if (!(data & KVM_MSR_ENABLED))
++                       break;
++
++               vcpu->arch.v_state.vs_page = gfn_to_page(vcpu->kvm, data >> PAGE_SHIFT);
++
++               if (is_error_page(vcpu->arch.v_state.vs_page)) {
++                       kvm_release_page_clean(vcpu->arch.v_state.vs_page);
++                       vcpu->arch.v_state.vs_page = NULL;
++                       pr_info("KVM: VCPU_STATE - Unable to pin the page\n");
++                       break;
++               }
++               vcpu->arch.v_state.vs_offset = data & ~(PAGE_MASK | KVM_MSR_ENABLED);
++               vcpu->arch.v_state.msr_val = data;
++               break;
++
+ 	case MSR_IA32_MCG_CTL:
+ 	case MSR_IA32_MCG_STATUS:
+ 	case MSR_IA32_MC0_CTL ... MSR_IA32_MCx_CTL(KVM_MAX_MCE_BANKS) - 1:
+@@ -2587,6 +2662,9 @@ int kvm_get_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata)
+ 	case MSR_KVM_PV_EOI_EN:
+ 		data = vcpu->arch.pv_eoi.msr_val;
+ 		break;
++        case MSR_KVM_VCPU_STATE:
++                data = vcpu->arch.v_state.msr_val;
++                break;
+ 	case MSR_IA32_P5_MC_ADDR:
+ 	case MSR_IA32_P5_MC_TYPE:
+ 	case MSR_IA32_MCG_CAP:
+@@ -6266,6 +6344,8 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
+ 		kvm_load_guest_fpu(vcpu);
+ 	kvm_load_guest_xcr0(vcpu);
+ 
++        kvm_set_vcpu_state(vcpu);
++ 
+ 	vcpu->mode = IN_GUEST_MODE;
+ 
+ 	srcu_read_unlock(&vcpu->kvm->srcu, vcpu->srcu_idx);
+@@ -6279,6 +6359,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
+ 
+ 	if (vcpu->mode == EXITING_GUEST_MODE || vcpu->requests
+ 	    || need_resched() || signal_pending(current)) {
++                kvm_clear_vcpu_state(vcpu);
+ 		vcpu->mode = OUTSIDE_GUEST_MODE;
+ 		smp_wmb();
+ 		local_irq_enable();
+@@ -6334,6 +6415,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
+ 	vcpu->arch.last_guest_tsc = kvm_x86_ops->read_l1_tsc(vcpu,
+ 							   native_read_tsc());
+ 
++        kvm_clear_vcpu_state(vcpu);
+ 	vcpu->mode = OUTSIDE_GUEST_MODE;
+ 	smp_wmb();
+ 
+@@ -7005,6 +7087,7 @@ void kvm_put_guest_fpu(struct kvm_vcpu *vcpu)
+ void kvm_arch_vcpu_free(struct kvm_vcpu *vcpu)
+ {
+ 	kvmclock_reset(vcpu);
++        kvm_vcpu_state_reset(vcpu);
+ 
+ 	free_cpumask_var(vcpu->arch.wbinvd_dirty_mask);
+ 	fx_free(vcpu);
+@@ -7096,6 +7179,7 @@ void kvm_vcpu_reset(struct kvm_vcpu *vcpu)
+ 	vcpu->arch.st.msr_val = 0;
+ 
+ 	kvmclock_reset(vcpu);
++        kvm_vcpu_state_reset(vcpu);
+ 
+ 	kvm_clear_async_pf_completion_queue(vcpu);
+ 	kvm_async_pf_hash_reset(vcpu);
+-- 
+1.8.3.1
+

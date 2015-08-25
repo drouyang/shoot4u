@@ -1,0 +1,31 @@
+From 0034fb28c6bf05c6571a25c58037d1cb5bd480d3 Mon Sep 17 00:00:00 2001
+From: "ouyang@cs.pitt.edu" <Jiannan Ouyang>
+Date: Mon, 20 Jul 2015 11:55:57 -0400
+Subject: [PATCH 6/7] guest fix
+
+---
+ arch/x86/kernel/kvm.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/arch/x86/kernel/kvm.c b/arch/x86/kernel/kvm.c
+index 203ab22..0a1599c 100644
+--- a/arch/x86/kernel/kvm.c
++++ b/arch/x86/kernel/kvm.c
+@@ -533,11 +533,11 @@ void __init kvm_guest_init(void)
+ 	if (kvmclock_vsyscall)
+ 		kvm_setup_vsyscall_timeinfo();
+ 
+-#ifdef CONFIG_PARAVIRT_TLB_FLUSH
+-       if (kvm_para_has_feature(KVM_FEATURE_VCPU_STATE)) {
++//#ifdef CONFIG_PARAVIRT_TLB_FLUSH
++//     if (kvm_para_has_feature(KVM_FEATURE_VCPU_STATE)) {
+                has_vcpu_state = 1;
+                pv_mmu_ops.flush_tlb_others = kvm_flush_tlb_others;
+-       }
++//       }
+ #endif
+ 
+ #ifdef CONFIG_SMP
+-- 
+1.8.3.1
+

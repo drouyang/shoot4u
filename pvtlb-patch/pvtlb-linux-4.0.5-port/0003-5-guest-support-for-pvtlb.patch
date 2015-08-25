@@ -1,0 +1,113 @@
+From b1e3cf5d6271d7ddc78f73c8f3aa5685821bdefa Mon Sep 17 00:00:00 2001
+From: Jiannan Ouyang <ouyang@cs.pitt.edu>
+Date: Sat, 18 Jul 2015 17:08:26 -0400
+Subject: [PATCH 3/7] 5: guest support for pvtlb
+
+---
+ arch/x86/include/asm/tlbflush.h | 11 +++++++++++
+ arch/x86/kernel/kvm.c           |  4 +++-
+ arch/x86/mm/tlb.c               | 36 ++++++++++++++++++++++++++++++++++++
+ 3 files changed, 50 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/include/asm/tlbflush.h b/arch/x86/include/asm/tlbflush.h
+index cd79194..71caff5 100644
+--- a/arch/x86/include/asm/tlbflush.h
++++ b/arch/x86/include/asm/tlbflush.h
+@@ -216,6 +216,13 @@ static inline void native_flush_tlb_others(const struct cpumask *cpumask,
+ {
+ }
+ 
++static inline void kvm_flush_tlb_others(const struct cpumask *cpumask,
++                                       struct mm_struct *mm,
++                                       unsigned long start,
++                                       unsigned long end)
++{
++}
++
+ static inline void reset_lazy_tlbstate(void)
+ {
+ }
+@@ -250,6 +257,10 @@ void native_flush_tlb_others(const struct cpumask *cpumask,
+ 				struct mm_struct *mm,
+ 				unsigned long start, unsigned long end);
+ 
++void kvm_flush_tlb_others(const struct cpumask *cpumask,
++                       struct mm_struct *mm, unsigned long start,
++                       unsigned long end);
++
+ #define TLBSTATE_OK	1
+ #define TLBSTATE_LAZY	2
+ 
+diff --git a/arch/x86/kernel/kvm.c b/arch/x86/kernel/kvm.c
+index 35670ea..203ab22 100644
+--- a/arch/x86/kernel/kvm.c
++++ b/arch/x86/kernel/kvm.c
+@@ -534,8 +534,10 @@ void __init kvm_guest_init(void)
+ 		kvm_setup_vsyscall_timeinfo();
+ 
+ #ifdef CONFIG_PARAVIRT_TLB_FLUSH
+-       if (kvm_para_has_feature(KVM_FEATURE_VCPU_STATE))
++       if (kvm_para_has_feature(KVM_FEATURE_VCPU_STATE)) {
+                has_vcpu_state = 1;
++               pv_mmu_ops.flush_tlb_others = kvm_flush_tlb_others;
++       }
+ #endif
+ 
+ #ifdef CONFIG_SMP
+diff --git a/arch/x86/mm/tlb.c b/arch/x86/mm/tlb.c
+index 3250f23..69b6bd8 100644
+--- a/arch/x86/mm/tlb.c
++++ b/arch/x86/mm/tlb.c
+@@ -6,6 +6,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/module.h>
+ #include <linux/cpu.h>
++#include <linux/kvm_para.h>
+ 
+ #include <asm/tlbflush.h>
+ #include <asm/mmu_context.h>
+@@ -130,6 +131,41 @@ static void flush_tlb_func(void *info)
+ 
+ }
+ 
++#ifdef CONFIG_KVM_GUEST
++
++DECLARE_PER_CPU(struct kvm_vcpu_state, vcpu_state) __aligned(64);
++
++void kvm_flush_tlb_others(const struct cpumask *cpumask,
++                       struct mm_struct *mm, unsigned long start,
++                       unsigned long end)
++{
++       struct flush_tlb_info info;
++       struct kvm_vcpu_state *v_state;
++       u64 state;
++       int cpu;
++       cpumask_t flushmask;
++
++       cpumask_copy(&flushmask, cpumask);
++       info.flush_mm = mm;
++       info.flush_start = start;
++       info.flush_end = end;
++       /*
++        * We have to call flush only on online vCPUs. And
++        * queue flush_on_enter for pre-empted vCPUs
++        */
++       for_each_cpu(cpu, to_cpumask(&flushmask)) {
++               v_state = &per_cpu(vcpu_state, cpu);
++               state = v_state->state;
++               if (!test_bit(KVM_VCPU_STATE_IN_GUEST_MODE, &state)) {
++                       if (cmpxchg(&v_state->state, state, state | 1 << KVM_VCPU_STATE_SHOULD_FLUSH))
++                               cpumask_clear_cpu(cpu, to_cpumask(&flushmask));
++               }
++       }
++
++       smp_call_function_many(&flushmask, flush_tlb_func, &info, 1);
++}
++#endif /* CONFIG_KVM_GUEST */
++
+ void native_flush_tlb_others(const struct cpumask *cpumask,
+ 				 struct mm_struct *mm, unsigned long start,
+ 				 unsigned long end)
+-- 
+1.8.3.1
+
