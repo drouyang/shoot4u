@@ -1,22 +1,21 @@
-From d762dffa5d1b35b8759be190dfd24664a74bb5c2 Mon Sep 17 00:00:00 2001
+From 58ea4a00cbdb7d0de67769b20d8a96d6565cbdf3 Mon Sep 17 00:00:00 2001
 From: Jiannan Ouyang <jiannan.ouyang@gmail.com>
-Date: Thu, 16 Jul 2015 14:12:29 -0700
-Subject: [PATCH 1/4] shoot4u host support
+Date: Fri, 17 Jul 2015 15:27:37 -0400
+Subject: [PATCH 1/2] host support
 
-Signed-off-by: ouyang@cs.pitt.edu <Jiannan Ouyang>
 ---
- arch/x86/include/asm/kvm_host.h |  4 +++
- arch/x86/include/asm/vmx.h      |  2 ++
- arch/x86/kvm/vmx.c              | 38 ++++++++++++++++++++
- arch/x86/kvm/x86.c              | 78 +++++++++++++++++++++++++++++++++++++++++
- include/uapi/linux/kvm_para.h   |  1 +
- 5 files changed, 123 insertions(+)
+ arch/x86/include/asm/kvm_host.h |   4 ++
+ arch/x86/include/asm/vmx.h      |   2 +
+ arch/x86/kvm/vmx.c              |  38 +++++++++++++++
+ arch/x86/kvm/x86.c              | 101 ++++++++++++++++++++++++++++++++++++++++
+ include/uapi/linux/kvm_para.h   |   1 +
+ 5 files changed, 146 insertions(+)
 
 diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
-index 1c0fb57..babf7e8 100644
+index 49205d0..38d356b 100644
 --- a/arch/x86/include/asm/kvm_host.h
 +++ b/arch/x86/include/asm/kvm_host.h
-@@ -741,6 +741,10 @@ struct kvm_x86_ops {
+@@ -712,6 +712,10 @@ struct kvm_x86_ops {
  	void (*fpu_deactivate)(struct kvm_vcpu *vcpu);
  
  	void (*tlb_flush)(struct kvm_vcpu *vcpu);
@@ -28,10 +27,10 @@ index 1c0fb57..babf7e8 100644
  	void (*run)(struct kvm_vcpu *vcpu);
  	int (*handle_exit)(struct kvm_vcpu *vcpu);
 diff --git a/arch/x86/include/asm/vmx.h b/arch/x86/include/asm/vmx.h
-index da772ed..0da58ba 100644
+index 7004d21..3e51e19 100644
 --- a/arch/x86/include/asm/vmx.h
 +++ b/arch/x86/include/asm/vmx.h
-@@ -396,6 +396,7 @@ enum vmcs_field {
+@@ -386,6 +386,7 @@ enum vmcs_field {
  #define IDENTITY_PAGETABLE_PRIVATE_MEMSLOT	(KVM_USER_MEM_SLOTS + 2)
  
  #define VMX_NR_VPIDS				(1 << 16)
@@ -39,7 +38,7 @@ index da772ed..0da58ba 100644
  #define VMX_VPID_EXTENT_SINGLE_CONTEXT		1
  #define VMX_VPID_EXTENT_ALL_CONTEXT		2
  
-@@ -415,6 +416,7 @@ enum vmcs_field {
+@@ -405,6 +406,7 @@ enum vmcs_field {
  #define VMX_EPT_EXTENT_CONTEXT_BIT		(1ull << 25)
  #define VMX_EPT_EXTENT_GLOBAL_BIT		(1ull << 26)
  
@@ -48,10 +47,10 @@ index da772ed..0da58ba 100644
  #define VMX_VPID_EXTENT_GLOBAL_CONTEXT_BIT      (1ull << 10) /* (42 - 32) */
  
 diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
-index 5318d64..2689db5 100644
+index 801332e..98b4be5 100644
 --- a/arch/x86/kvm/vmx.c
 +++ b/arch/x86/kvm/vmx.c
-@@ -563,6 +563,12 @@ static inline struct vcpu_vmx *to_vmx(struct kvm_vcpu *vcpu)
+@@ -497,6 +497,12 @@ static inline struct vcpu_vmx *to_vmx(struct kvm_vcpu *vcpu)
  	return container_of(vcpu, struct vcpu_vmx, vcpu);
  }
  
@@ -64,7 +63,7 @@ index 5318d64..2689db5 100644
  #define VMCS12_OFFSET(x) offsetof(struct vmcs12, x)
  #define FIELD(number, name)	[number] = VMCS12_OFFSET(name)
  #define FIELD64(number, name)	[number] = VMCS12_OFFSET(name), \
-@@ -1034,6 +1040,11 @@ static inline bool cpu_has_vmx_invept_global(void)
+@@ -964,6 +970,11 @@ static inline bool cpu_has_vmx_invept_global(void)
  	return vmx_capability.ept & VMX_EPT_EXTENT_GLOBAL_BIT;
  }
  
@@ -76,7 +75,7 @@ index 5318d64..2689db5 100644
  static inline bool cpu_has_vmx_invvpid_single(void)
  {
  	return vmx_capability.vpid & VMX_VPID_EXTENT_SINGLE_CONTEXT_BIT;
-@@ -1337,6 +1348,7 @@ static void loaded_vmcs_clear(struct loaded_vmcs *loaded_vmcs)
+@@ -1236,6 +1247,7 @@ static void loaded_vmcs_clear(struct loaded_vmcs *loaded_vmcs)
  			 __loaded_vmcs_clear, loaded_vmcs, 1);
  }
  
@@ -84,7 +83,7 @@ index 5318d64..2689db5 100644
  static inline void vpid_sync_vcpu_single(struct vcpu_vmx *vmx)
  {
  	if (vmx->vpid == 0)
-@@ -1360,6 +1372,17 @@ static inline void vpid_sync_context(struct vcpu_vmx *vmx)
+@@ -1259,6 +1271,17 @@ static inline void vpid_sync_context(struct vcpu_vmx *vmx)
  		vpid_sync_vcpu_global();
  }
  
@@ -102,7 +101,7 @@ index 5318d64..2689db5 100644
  static inline void ept_sync_global(void)
  {
  	if (cpu_has_vmx_invept_global())
-@@ -3458,6 +3481,17 @@ static void vmx_flush_tlb(struct kvm_vcpu *vcpu)
+@@ -3331,6 +3354,17 @@ static void vmx_flush_tlb(struct kvm_vcpu *vcpu)
  	}
  }
  
@@ -120,7 +119,7 @@ index 5318d64..2689db5 100644
  static void vmx_decache_cr0_guest_bits(struct kvm_vcpu *vcpu)
  {
  	ulong cr0_guest_owned_bits = vcpu->arch.cr0_guest_owned_bits;
-@@ -10183,6 +10217,10 @@ static struct kvm_x86_ops vmx_x86_ops = {
+@@ -8825,6 +8859,10 @@ static struct kvm_x86_ops vmx_x86_ops = {
  	.fpu_deactivate = vmx_fpu_deactivate,
  
  	.tlb_flush = vmx_flush_tlb,
@@ -132,10 +131,10 @@ index 5318d64..2689db5 100644
  	.run = vmx_vcpu_run,
  	.handle_exit = vmx_handle_exit,
 diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
-index 8838057..2f96524 100644
+index ef432f8..6a8bb3b 100644
 --- a/arch/x86/kvm/x86.c
 +++ b/arch/x86/kvm/x86.c
-@@ -64,6 +64,7 @@
+@@ -63,6 +63,7 @@
  #include <asm/xcr.h>
  #include <asm/pvclock.h>
  #include <asm/div64.h>
@@ -143,20 +142,22 @@ index 8838057..2f96524 100644
  
  #define MAX_IO_MSRS 256
  #define KVM_MAX_MCE_BANKS 32
-@@ -112,6 +113,12 @@ module_param(tsc_tolerance_ppm, uint, S_IRUGO | S_IWUSR);
- unsigned int lapic_timer_advance_ns = 0;
- module_param(lapic_timer_advance_ns, uint, S_IRUGO | S_IWUSR);
+@@ -106,6 +107,14 @@ EXPORT_SYMBOL_GPL(kvm_max_guest_tsc_khz);
+ static u32 tsc_tolerance_ppm = 250;
+ module_param(tsc_tolerance_ppm, uint, S_IRUGO | S_IWUSR);
  
 +/* lapic timer advance (tscdeadline mode only) in nanoseconds */
-+#define SHOOT4U_MODE_COARSE 0
-+#define SHOOT4U_MODE_FINE   1
-+unsigned int shoot4u_mode = SHOOT4U_MODE_COARSE;
++#define SHOOT4U_MODE_DEFAULT   0
++#define SHOOT4U_MODE_TEST1     1
++#define SHOOT4U_MODE_TEST2     2
++#define SHOOT4U_MODE_TEST3     3
++unsigned int shoot4u_mode = SHOOT4U_MODE_DEFAULT;
 +module_param(shoot4u_mode, uint, S_IRUGO | S_IWUSR);
 +
  static bool backwards_tsc_observed = false;
  
  #define KVM_NR_SHARED_MSRS 16
-@@ -5903,6 +5910,73 @@ static void kvm_pv_kick_cpu_op(struct kvm *kvm, unsigned long flags, int apicid)
+@@ -5736,6 +5745,94 @@ static void kvm_pv_kick_cpu_op(struct kvm *kvm, unsigned long flags, int apicid)
  	kvm_irq_delivery_to_apic(kvm, 0, &lapic_irq, NULL);
  }
  
@@ -173,17 +174,37 @@ index 8838057..2f96524 100644
 +	struct kvm_shoot4u_info *f = info;
 +
 +        //printk("[shoot4u] IPI handler at pCPU %d: invalidate vCPU %d\n", smp_processor_id(), f->vcpu->vcpu_id);
-+        if (!f->flush_end)
-+            f->flush_end = f->flush_start + PAGE_SIZE;
 +        
-+        if (shoot4u_mode == SHOOT4U_MODE_COARSE) {
-+            // implementation 1: flush everything
++        if (shoot4u_mode == SHOOT4U_MODE_DEFAULT) {
++            // all (linear + EPT mappings)
 +            kvm_x86_ops->tlb_flush(f->vcpu);
-+        } else {
-+            // implementation 2: fine grain flushing
-+            if (f->flush_end == TLB_FLUSH_ALL)
-+                    kvm_x86_ops->tlb_flush_vpid_single_ctx(f->vcpu);
++        } else if (shoot4u_mode == SHOOT4U_MODE_TEST1) {
++	    // all (linear mappings only)
++	    kvm_x86_ops->tlb_flush_vpid_single_ctx(f->vcpu);
++        } else if (shoot4u_mode == SHOOT4U_MODE_TEST2) {
++            // single or all (linear + EPT mappings)
++            if (!f->flush_end)
++		    kvm_x86_ops->tlb_flush_vpid_single_addr(f->vcpu, f->flush_start);
 +            else {
++		    kvm_x86_ops->tlb_flush(f->vcpu); 
++            }
++        } else if (shoot4u_mode == SHOOT4U_MODE_TEST3) {
++            // seg fault
++            // single or all (linear mappings only) 
++            if (!f->flush_end)
++		    kvm_x86_ops->tlb_flush_vpid_single_addr(f->vcpu, f->flush_start);
++            else {
++                    kvm_x86_ops->tlb_flush_vpid_single_ctx(f->vcpu);
++            }
++	} else {
++/*
++ 	    // seg fault problem
++            if (f->flush_end == TLB_FLUSH_ALL)
++                    //kvm_x86_ops->tlb_flush_vpid_single_ctx(f->vcpu); //seg fault
++		    // kvm_x86_ops->tlb_flush(f->vcpu); //seg fault
++            else if (!f->flush_end) {
++		    kvm_x86_ops->tlb_flush_vpid_single_addr(f->vcpu, f->flush_start);
++	    } else {
 +                    unsigned long addr;
 +                    addr = f->flush_start;
 +                    while (addr < f->flush_end) {
@@ -191,8 +212,9 @@ index 8838057..2f96524 100644
 +                        addr += PAGE_SIZE;
 +                    }
 +            }
-+        
-+        }
++*/
++
++	}
 +
 +        return;
 +}
@@ -230,7 +252,7 @@ index 8838057..2f96524 100644
  int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
  {
  	unsigned long nr, a0, a1, a2, a3, ret;
-@@ -5941,6 +6015,10 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
+@@ -5773,6 +5870,10 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
  		kvm_pv_kick_cpu_op(vcpu->kvm, a0, a1);
  		ret = 0;
  		break;

@@ -1,9 +1,8 @@
-From a75cad8949f1b900a6c60bc15c10e7065ded1f50 Mon Sep 17 00:00:00 2001
+From a2c33d10bbc5b6d75933aadb45d02b0d372844ab Mon Sep 17 00:00:00 2001
 From: Jiannan Ouyang <jiannan.ouyang@gmail.com>
-Date: Thu, 16 Jul 2015 14:12:42 -0700
-Subject: [PATCH 2/4] shoot4u guest support
+Date: Fri, 17 Jul 2015 15:27:55 -0400
+Subject: [PATCH 2/2] guest support
 
-Signed-off-by: ouyang@cs.pitt.edu <Jiannan Ouyang>
 ---
  arch/x86/Kconfig                |  6 ++++++
  arch/x86/include/asm/tlbflush.h | 11 +++++++++++
@@ -12,10 +11,10 @@ Signed-off-by: ouyang@cs.pitt.edu <Jiannan Ouyang>
  4 files changed, 43 insertions(+)
 
 diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
-index b7d31ca..1ac7707 100644
+index d24887b..e242188 100644
 --- a/arch/x86/Kconfig
 +++ b/arch/x86/Kconfig
-@@ -671,6 +671,12 @@ config PARAVIRT_SPINLOCKS
+@@ -588,6 +588,12 @@ config PARAVIRT_SPINLOCKS
  
  	  If you are unsure how to answer this question, answer Y.
  
@@ -29,10 +28,10 @@ index b7d31ca..1ac7707 100644
  
  config KVM_GUEST
 diff --git a/arch/x86/include/asm/tlbflush.h b/arch/x86/include/asm/tlbflush.h
-index cd79194..07c7e2c 100644
+index 04905bf..d5b7c60 100644
 --- a/arch/x86/include/asm/tlbflush.h
 +++ b/arch/x86/include/asm/tlbflush.h
-@@ -209,6 +209,13 @@ static inline void flush_tlb_mm_range(struct mm_struct *mm,
+@@ -140,6 +140,13 @@ static inline void flush_tlb_mm_range(struct mm_struct *mm,
  		__flush_tlb_up();
  }
  
@@ -46,7 +45,7 @@ index cd79194..07c7e2c 100644
  static inline void native_flush_tlb_others(const struct cpumask *cpumask,
  					   struct mm_struct *mm,
  					   unsigned long start,
-@@ -246,6 +253,10 @@ extern void flush_tlb_kernel_range(unsigned long start, unsigned long end);
+@@ -177,6 +184,10 @@ extern void flush_tlb_kernel_range(unsigned long start, unsigned long end);
  
  #define flush_tlb()	flush_tlb_current_task()
  
@@ -58,10 +57,10 @@ index cd79194..07c7e2c 100644
  				struct mm_struct *mm,
  				unsigned long start, unsigned long end);
 diff --git a/arch/x86/kernel/kvm.c b/arch/x86/kernel/kvm.c
-index e354cc6..04acc4c 100644
+index 3dd8e2c..165eec9 100644
 --- a/arch/x86/kernel/kvm.c
 +++ b/arch/x86/kernel/kvm.c
-@@ -295,6 +295,10 @@ static void __init paravirt_ops_setup(void)
+@@ -287,6 +287,10 @@ static void __init paravirt_ops_setup(void)
  	if (kvm_para_has_feature(KVM_FEATURE_NOP_IO_DELAY))
  		pv_cpu_ops.io_delay = kvm_io_delay;
  
@@ -73,7 +72,7 @@ index e354cc6..04acc4c 100644
  	no_timer_check = 1;
  #endif
 diff --git a/arch/x86/mm/tlb.c b/arch/x86/mm/tlb.c
-index 3250f23..c4c5732 100644
+index dd8dda1..30d730f 100644
 --- a/arch/x86/mm/tlb.c
 +++ b/arch/x86/mm/tlb.c
 @@ -12,7 +12,9 @@
@@ -84,9 +83,9 @@ index 3250f23..c4c5732 100644
  #include <linux/debugfs.h>
 +#include <linux/kvm_para.h>
  
- /*
-  *	Smarter SMP flushing macros.
-@@ -130,6 +132,26 @@ static void flush_tlb_func(void *info)
+ DEFINE_PER_CPU_SHARED_ALIGNED(struct tlb_state, cpu_tlbstate)
+ 			= { &init_mm, 0, };
+@@ -122,6 +124,26 @@ static void flush_tlb_func(void *info)
  
  }
  
