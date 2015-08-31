@@ -241,9 +241,8 @@ index ef432f8..6a8bb3b 100644
 +                if (v != vcpu && test_bit(v->vcpu_id, (void*)&vcpu_bitmap)) {
 +                        info.vcpu = v; 
 +                        //printk("[shoot4u] before send IPI to vcpu %d at pcpu %d\n", v->vcpu_id, v->cpu);
++                        // it is fine if a vCPU migrates because migratation triggers tlb_flush automatically
 +                        smp_call_function_single(v->cpu, flush_tlb_func_shoot4u, &info, 1);
-+                        // maybe can do call_function_many by map vcpu_mask to pvpu_mask, 
-+                        // it leverages the fact that vcpu migratation triggers tlb_flush automatically
 +                }
 +        }
 +}
