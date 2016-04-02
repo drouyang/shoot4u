@@ -1,25 +1,8 @@
-## Usage
-### shoot4u
-#### Option 1: with git
-```
-$ git am shoot4u-patch/*.patch
-```
-#### Option 2: with patch
-```
-$ patch -p1 < /path/to/dir/0001-*.patch
-$ patch -p1 < /path/to/dir/0002-*.patch
-```
-### paravirtual remote TLB flush (pvtlb)
-http://www.spinics.net/lists/kvm/msg78403.html
+# Shoot4U: Using VMM Assists to Optimize TLB Operations on Preempted vCPUs
 
-#### Option 1: with git
-```
-$ git am pvtlb-patch/pvtlb-linux-4.0.5-port/*.patch
-```
-#### Option 2: with patch
-```
-$ patch -p1 < /path/to/dir/0001-*.patch
-$ patch -p1 < /path/to/dir/0002-*.patch
-...
-$ patch -p1 < /path/to/dir/0007-*.patch
-```
+KVM implementation of Shoot4U. Original paper published at The 12th ACM SIGPLAN/SIGOPS International Conference on Virtual Execution Environments (VEE’16).
+
+## Directories
+* shoot4u: shoot4u patches
+* kvmtlb: kvm paravirtual TLB shootdown scheme patches
+* ktap-profiling: ktap scripts that measures TLB shootdown latency
